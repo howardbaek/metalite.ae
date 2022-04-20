@@ -1,0 +1,226 @@
+---
+title: "Metadata for A&R"
+output:
+  distill::distill_article:
+    self_contained: false
+    toc: true
+    toc_depth: 1
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Overview
+
+In A&R for clinical development, 
+metadata can be helpful to improve development workflow. 
+
+By using R, we implemented a prototype to demonstrate 
+the capability of using metadata to drive end-to-end A&R deliverables, including 
+
+- TLF generation in RTF format 
+- interactive visualization 
+- A&R grid generation 
+- (Simplified) mock table generation
+
+# Design Principals
+
+The prototype follows the design principals below:
+
+- Automation: a function call is better than a checklist. 
+- Consistency: function input and output follow the same convention.
+- Single-entry: enter in one place, sync to all delivery. 
+  - e.g., Enter data source one time for all AE analyses.
+- End-to-end: cover all steps in SDLC from definition to delivery.
+- Abstraction: separate logic from data dependency.
+  - Simplify maintenance when ADaM version is updated.
+
+This demo focuses on standard AE analysis to illustrate the design principles.
+
+## Design diagram
+
+The critical component is to define a consistent metadata structure to be the input 
+of all potential deliverables. 
+
+```{r, out.width = "100%", out.height = "400px", echo = FALSE, fig.align = "center"}
+knitr::include_graphics("images/design-diagram.png")
+```
+
+- `metalite`: an R package to define metadata structure.
+  - [data strcuture design details](https://merck.github.io/metalite/articles/index.html)
+- `metalite.ae`: an R package to complete AE TLFs generation using `metalite`. 
+  - (future) cover all requirements in the existing standard AE SAS macro.
+- `forestly`: an R package to create an interactive forest plot using `metalite`. 
+- (future) become the backend tool for Shiny applications such as mock table generation.
+
+The interactive DMC pilot is based on this framework to provide an end-to-end demo.
+
+# Examples 
+
+## Dummy metadata 
+
+```{r}
+library(dplyr)
+library(metalite)
+library(metalite.ae)
+```
+
+In `metalite.ae`, we created dummy metadata for illustration purposes.   
+
+```{r, echo = TRUE}
+meta <- metalite.ae::meta_ae_dummy()
+```
+
+The metadata contains three key components:
+
+- datasets
+- an analysis plan based on keywords (e.g. "apat", "wk12")
+- definition of keywords
+
+<details>
+  <summary>Click me to see components details</summary>
+
+### Datasets
+
+- population level: adsl 
+- observation level: adae 
+
+```
+ADaM Meta Data: 
+   .$data_population 	Population data with 254 subjects 
+   .$data_observation 	Observation data with 1191 records 
+```
+
+### Analysis plan based on keywords 
+
+```{r}
+meta$plan
+```
+
+### Keywords definition 
+
+```
+  Analysis population type:
+    name        id  group var       subset                         label
+1 'apat' 'USUBJID' 'TRTA'     SAFFL == 'Y' 'All Participants as Treated'
+
+
+  Analysis observation type:
+    name        id  group var          subset           label
+1 'wk12' 'USUBJID' 'TRTA'        SAFFL == 'Y' 'Weeks 0 to 12'
+```
+</details>
+
+## A&R grid 
+
+After the metadata is created, we can easily create/update an A&R grid.
+
+```{r, echo = TRUE}
+grid <- data.frame(
+  title = spec_title(meta),
+  filename = spec_filename(meta),
+  function_name = meta$plan$analysis,
+  population = spec_analysis_population(meta)
+)
+```
+
+<details>
+  <summary>Click me to see the A&R grid example</summary>
+  
+```{r}
+grid %>%
+  mutate(across(everything(), ~ gsub("\n", "<br>", .x))) %>%
+  gt::gt() %>%
+  gt::fmt_markdown(columns = gt::everything()) 
+```
+</details>
+
+## TLF generation
+
+After defining standardized function `ae_summary` and `ae_specific`, the calling program
+can be executed individually or in batch using `metalite::meta_run`. 
+
+```{r, echo = TRUE}
+spec_call_program(meta, 
+                  source = "adam-adsl; adae")
+```
+
+<details>
+  <summary>Click me to see an specific AE TLF generation example</summary>
+
+Using helper functions in `metalite.ae` 
+can define a project-specific call program to pair with the metadata.
+
+```{r, echo = TRUE}
+ae_specific <- function(meta, population, observation, parameter, source, mock = FALSE){
+  
+  path <- ifelse(mock, "outtable/mock-ae-specific.rtf", "outtable/ae-specific.rtf")
+  
+  meta %>% 
+    prepare_ae_specific(population = population, 
+                        observation = observation, 
+                        parameter = parameter) %>%
+    format_ae_specific(display = c("n", "prop"), 
+                       mock = mock) %>%
+    tlf_ae_specific(medra_version = "24.0", 
+                    source = source,
+                    path_outtable = path)
+}
+
+```
+
+```{r, message=FALSE}
+ae_specific(meta, population = "apat", observation = "wk12", parameter = "rel", 
+            source = "adam-adsl; adae")
+```
+</details>
+
+```{r, out.width = "100%", out.height = "400px", echo = FALSE, fig.align = "center"}
+knitr::include_graphics("outtable/ae-specific.pdf")
+```
+
+
+
+## (Simplified) mock table generation function
+
+For standard functions in `metalite.ae`, 
+we provided an argument `mock=TRUE` to generate masked tables.
+
+- This mockup table simply masked the number. 
+- It can be helpful to perform post-hoc manual updates. 
+- Simplify the development of a comprehensive mock table function.
+
+<details>
+  <summary>Click me to see an specific AE TLF generation example</summary>
+
+```{r, message=FALSE}
+ae_specific(meta, population = "apat", observation = "wk12", parameter = "rel", 
+            source = "adam-adsl; adae", 
+            mock = TRUE)
+```
+
+</details>
+
+```{r, out.width = "100%", out.height = "400px", echo = FALSE, fig.align = "center"}
+knitr::include_graphics("outtable/mock-ae-specific.pdf")
+```
+
+## Interactive forest plot 
+
+The same procedure can be used to create an interactive forest plot using forestly.
+
+```{r, message = FALSE, eval = TRUE}
+library(forestly)
+
+meta %>% 
+  prepare_ae_forestly(population = "apat",
+                      observation = "wk12",
+                      parameter = "any;rel;ser",
+                      components = "par") %>%
+  format_ae_forestly() %>%
+  ae_forestly()
+```
+
+
