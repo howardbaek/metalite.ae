@@ -16,7 +16,7 @@
 - AE summary 
 - Specific AE analysis 
 
-## Workflow testing
+## Workflow 
 
 The general workflow is splited into three parts. 
 
